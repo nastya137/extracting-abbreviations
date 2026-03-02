@@ -5,7 +5,7 @@ from src.prepare_data import answer_query, process_pdf_folder
 def main():
     root_project = Path(__file__).absolute().parents[1]
     documents_dir = root_project/"documents"
-    output_json = "abbreviations.json"
+    output_json = root_project/"data/abbreviations.json"
 
     if not os.path.isdir(documents_dir):
         raise FileNotFoundError(

@@ -3,7 +3,42 @@ import os
 import re
 from collections import defaultdict
 
-ABBR_PATTERN = r"[А-ЯЁA-Z]{2,10}"
+ABBR_PATTERN = r"[А-ЯЁA-Z][А-Яа-яЁёA-Za-z]{1,15}"
+STOPWORDS_RU = {
+    "И",
+    "А",
+    "НО",
+    "ИЛИ",
+    "ДА",
+    "ЛИ",
+    "ЖЕ",
+    "БЫ",
+    "В",
+    "ВО",
+    "НА",
+    "К",
+    "КО",
+    "О",
+    "ОБ",
+    "ОБО",
+    "ОТ",
+    "ДО",
+    "ПО",
+    "ПРИ",
+    "ПРО",
+    "ДЛЯ",
+    "С",
+    "СО",
+    "У",
+    "ИЗ",
+    "БЕЗ",
+    "ПОД",
+    "ПЕРЕД",
+    "ЧЕРЕЗ",
+    "МЕЖДУ",
+}
+STOPWORDS_EN = {"of", "the", "and", "for", "in", "on", "to"}
+
 
 # Извлечение текста из pdf
 def extract_text(path):
@@ -13,30 +48,72 @@ def extract_text(path):
     with fitz.open(path) as doc:
         for page in doc:
             pages.append(page.get_text("text"))
-    return "\n".join(pages)
+    text = "\n".join(pages)
+    text = re.sub(r"([А-Яа-яЁёA-Za-z])\-\s*\n\s*([А-Яа-яЁёA-Za-z])", r"\1\2", text)
+    return text
 
 
 # Проверка первых букв
 def check_first_letters(abbr, definition):
     words = re.findall(r"[А-Яа-яЁёA-Za-z0-9]+", definition)
-    initials = "".join(w[0].upper() for w in words if w)
+    initials = "".join(
+        w[0].upper() for w in words if w and w.upper() not in STOPWORDS_RU
+    )
     return abbr.upper() == initials[: len(abbr)]
+
+#Сопоставление первых букв с конца, поддержка предлогов и усечённых слов
+def match_abbr_from_end(abbr, words):
+    abbr_chars = list(abbr)
+    i = len(abbr_chars) - 1
+    j = len(words) - 1
+
+    used_words = []
+
+    while i >= 0 and j >= 0:
+        ch = abbr_chars[i]
+        word = words[j]
+
+        # пропускаем служебные слова
+        if word.lower() in STOPWORDS_EN:
+            j -= 1
+            continue
+
+        # строчная буква — предлог
+        if ch.islower():
+            if word.lower() == ch:
+                used_words.append(word)
+                i -= 1
+                j -= 1
+            else:
+                j -= 1
+            continue
+
+        # обычное сопоставление первой буквы
+        if word[0].upper() == ch.upper():
+            used_words.append(word)
+            i -= 1
+            j -= 1
+            continue
+        j -= 1
+    if i < 0:
+        return list(reversed(used_words))
+    return None
+
+
 
 # Выбор только слов с первыми буквами
 def crop_definition_to_abbr(abbr, definition):
-    words = re.findall(r"[А-Яа-яЁёA-Za-z0-9\-]+", definition)
+    words = re.findall(r"[А-Яа-яЁёA-Za-z\-]+", definition)
     if not words:
-        return definition.strip()
-    kept = []
-    initials = []
-    for word in words:
-        kept.append(word)
-        initials.append(word[0].upper())
-        if len(initials) >= len(abbr):
-            break
+        return None
+    matched = match_abbr_from_end(abbr, words)
+    if matched:
+        return " ".join(matched)
+    # fallback для очень коротких аббревиатур: ЭС, ИИ, НС
+    if len(abbr) <= 3 and len(words) >= len(abbr):
+        return " ".join(words[-len(abbr):])
+    return None
 
-    cropped = " ".join(kept).strip()
-    return cropped if cropped else definition.strip()
 
 # Поиск раздела с сокращениями
 def find_abbreviation_section(text):
@@ -56,12 +133,20 @@ def pattern_p1_checked(text):
         abbr = match.group(1).upper()
         start = max(0, match.start() - 120)
         context = text[start: match.start()]
-        before = re.search(r"([А-Яа-яёЁA-Za-z\s\-]{2,80})$", context)
+        before = re.search(r"([А-Яа-яЁёA-Za-z\s\-]{10,120})$", context)
         if before:
-            definition = before.group(1).strip(" -\n\t")
-            definition = crop_definition_to_abbr(abbr, definition)
-            confidence = 0.85 if check_first_letters(abbr, definition) else 0.65
+            definition_raw = before.group(1).strip(" -\n\t")
+            definition = crop_definition_to_abbr(abbr, definition_raw)
+            if not definition:
+                print(f"[SKIP] {abbr} <- '{definition_raw}'")
+                words = re.findall(r"[А-Яа-яЁёA-Za-z\-]+", definition_raw)
+                if len(abbr) <= 3 and len(words) >= len(abbr):
+                    definition = " ".join(words[-len(abbr):])
+                else:
+                    continue
+            confidence = 0.9
             results.append((abbr, definition, confidence))
+
     return results
 
 
@@ -72,9 +157,11 @@ def pattern_p2_checked(text):
     for abbr, definition in matches:
         abbr = abbr.upper().strip()
         definition = definition.strip()
-        definition = crop_definition_to_abbr(abbr, definition)
-        confidence = 0.8 if check_first_letters(abbr, definition) else 0.6
-        results.append((abbr, definition, confidence))
+        definition_cropped = crop_definition_to_abbr(abbr, definition)
+        if not definition_cropped:
+            continue
+        confidence = 0.8 if check_first_letters(abbr, definition_cropped) else 0.6
+        results.append((abbr, definition_cropped, confidence))
     return results
 
 
@@ -89,8 +176,10 @@ def pattern_p3_checked(text):
         if match:
             abbr = match.group(1).upper().strip()
             definition = match.group(2).strip()
-            definition = crop_definition_to_abbr(abbr, definition)
-            results.append((abbr, definition, 0.95))
+            definition_cropped = crop_definition_to_abbr(abbr, definition)
+            if not definition_cropped:
+                continue
+            results.append((abbr, definition_cropped, 0.95))
     return results
 
 
@@ -150,4 +239,5 @@ def answer_query(query, database):
             f"{item['definition']} (источник: {item['source']}, confidence={item['confidence']})"
             for item in answers
         ]
+    else:
         return [f"В документах расшифровка аббревиатуры '{abbr}' не найдена."]
