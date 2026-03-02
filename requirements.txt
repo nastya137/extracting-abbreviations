@@ -1,2 +1,1 @@
-fitz~=0.0.1.dev2
-frontend
+pathlib~=1.0.1

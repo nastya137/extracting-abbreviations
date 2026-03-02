@@ -22,6 +22,21 @@ def check_first_letters(abbr, definition):
     initials = "".join(w[0].upper() for w in words if w)
     return abbr.upper() == initials[: len(abbr)]
 
+# Выбор только слов с первыми буквами
+def crop_definition_to_abbr(abbr, definition):
+    words = re.findall(r"[А-Яа-яЁёA-Za-z0-9\-]+", definition)
+    if not words:
+        return definition.strip()
+    kept = []
+    initials = []
+    for word in words:
+        kept.append(word)
+        initials.append(word[0].upper())
+        if len(initials) >= len(abbr):
+            break
+
+    cropped = " ".join(kept).strip()
+    return cropped if cropped else definition.strip()
 
 # Поиск раздела с сокращениями
 def find_abbreviation_section(text):
@@ -44,6 +59,7 @@ def pattern_p1_checked(text):
         before = re.search(r"([А-Яа-яёЁA-Za-z\s\-]{2,80})$", context)
         if before:
             definition = before.group(1).strip(" -\n\t")
+            definition = crop_definition_to_abbr(abbr, definition)
             confidence = 0.85 if check_first_letters(abbr, definition) else 0.65
             results.append((abbr, definition, confidence))
     return results
@@ -56,6 +72,7 @@ def pattern_p2_checked(text):
     for abbr, definition in matches:
         abbr = abbr.upper().strip()
         definition = definition.strip()
+        definition = crop_definition_to_abbr(abbr, definition)
         confidence = 0.8 if check_first_letters(abbr, definition) else 0.6
         results.append((abbr, definition, confidence))
     return results
@@ -72,6 +89,7 @@ def pattern_p3_checked(text):
         if match:
             abbr = match.group(1).upper().strip()
             definition = match.group(2).strip()
+            definition = crop_definition_to_abbr(abbr, definition)
             results.append((abbr, definition, 0.95))
     return results
 
