@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 from src.prepare_data import answer_query, process_pdf_folder
-
+#Используется для демонстрации работы модуля
 def main():
     root_project = Path(__file__).absolute().parents[1]
     documents_dir = root_project/"documents"

@@ -5,37 +5,12 @@ from collections import defaultdict
 
 ABBR_PATTERN = r"[А-ЯЁA-Z][А-Яа-яЁёA-Za-z]{1,15}"
 STOPWORDS_RU = {
-    "И",
-    "А",
-    "НО",
-    "ИЛИ",
-    "ДА",
-    "ЛИ",
-    "ЖЕ",
-    "БЫ",
-    "В",
-    "ВО",
-    "НА",
-    "К",
-    "КО",
-    "О",
-    "ОБ",
-    "ОБО",
-    "ОТ",
-    "ДО",
-    "ПО",
-    "ПРИ",
-    "ПРО",
-    "ДЛЯ",
-    "С",
-    "СО",
-    "У",
-    "ИЗ",
-    "БЕЗ",
-    "ПОД",
-    "ПЕРЕД",
-    "ЧЕРЕЗ",
-    "МЕЖДУ",
+    "И", "А", "НО", "ИЛИ", "ДА",
+    "ЛИ", "ЖЕ", "БЫ", "В", "ВО",
+    "НА", "К", "О", "ОБ", "ОБО", "ОТ",
+    "ДО", "ПО", "ПРИ", "ПРО", "ДЛЯ",  "С",
+    "СО", "У", "ИЗ", "БЕЗ", "ПОД",
+    "ПЕРЕД",  "ЧЕРЕЗ",   "МЕЖДУ"
 }
 STOPWORDS_EN = {"of", "the", "and", "for", "in", "on", "to"}
 
@@ -72,13 +47,10 @@ def match_abbr_from_end(abbr, words):
     while i >= 0 and j >= 0:
         ch = abbr_chars[i]
         word = words[j]
-
-        # пропускаем служебные слова
         if word.lower() in STOPWORDS_EN:
             j -= 1
             continue
 
-        # строчная буква — предлог
         if ch.islower():
             if word.lower() == ch:
                 used_words.append(word)
@@ -87,8 +59,6 @@ def match_abbr_from_end(abbr, words):
             else:
                 j -= 1
             continue
-
-        # обычное сопоставление первой буквы
         if word[0].upper() == ch.upper():
             used_words.append(word)
             i -= 1
@@ -109,7 +79,6 @@ def crop_definition_to_abbr(abbr, definition):
     matched = match_abbr_from_end(abbr, words)
     if matched:
         return " ".join(matched)
-    # fallback для очень коротких аббревиатур: ЭС, ИИ, НС
     if len(abbr) <= 3 and len(words) >= len(abbr):
         return " ".join(words[-len(abbr):])
     return None
@@ -182,6 +151,28 @@ def pattern_p3_checked(text):
             results.append((abbr, definition_cropped, 0.95))
     return results
 
+# 4. АББР (...определение)
+def pattern_p4_checked(text):
+    results = []
+    for match in re.finditer(rf"({ABBR_PATTERN})\s*[\(（](.*?)[\)）]", text):
+        abbr = match.group(1).upper()
+        inner = match.group(2)
+
+        inner_clean = re.sub(
+            r"\b(акроним от|аббревиатур[аы]?|сокращени[еия]|англ\.|тат\.)\b",
+            "",
+            inner,
+            flags=re.IGNORECASE,
+        )
+
+        inner_clean = re.sub(r"\([^)]*\)", "", inner_clean)
+        inner_clean = re.sub(r"[«»]", "", inner_clean).strip()
+        definition = crop_definition_to_abbr(abbr, inner_clean)
+
+        if definition:
+            results.append((abbr, definition, 0.9))
+
+    return results
 
 # Дедупликация с сохранением максимального confidence
 def deduplicate(abbrs):
@@ -196,12 +187,13 @@ def deduplicate(abbrs):
     ]
 
 
-# Общая функция
+# Общая функция извлечения
 def extract_abbreviations(text):
     abbrs = []
     abbrs.extend(pattern_p1_checked(text))
     abbrs.extend(pattern_p2_checked(text))
     abbrs.extend(pattern_p3_checked(text))
+    abbrs.extend(pattern_p4_checked(text))
     return deduplicate(abbrs)
 
 
