@@ -84,48 +84,34 @@ def find_abbreviation_section(text):
     match = re.search(heading_pattern, text, re.IGNORECASE)
     if not match:
         return None
-
-    # Начинаем сразу после заголовка
     start = match.end()
     lines = text[start:].splitlines()
-
-    # Пропускаем пустые строки после заголовка
     idx = 0
     while idx < len(lines) and not lines[idx].strip():
         idx += 1
 
     section_lines = []
-    prev_was_empty = False  # была ли предыдущая строка пустой
+    prev_was_empty = False  
 
     for i in range(idx, len(lines)):
         line = lines[i]
         stripped = line.strip()
 
-        # Пустая строка – просто добавляем и отмечаем
         if not stripped:
             section_lines.append(line)
             prev_was_empty = True
             continue
-
-        # Строка содержит тире – часть определения
         if re.search(r'[–—-]', stripped):
             section_lines.append(line)
             prev_was_empty = False
             continue
 
-        # Строка похожа на аббревиатуру (короткая, из заглавных букв, возможно с цифрами/дефисом)
         if re.match(rf'^{ABBR_PATTERN}$', stripped):
             section_lines.append(line)
             prev_was_empty = False
             continue
-
-        # Если строка не пустая, без тире и не аббревиатура:
-        # 1) Если перед ней была пустая строка – это, скорее всего, начало нового раздела → останавливаемся
         if prev_was_empty:
             break
-
-        # 2) Иначе – вероятно, продолжение многострочного определения (вторая строка без тире)
-        # Добавляем и продолжаем, сбрасывая флаг пустоты
         section_lines.append(line)
         prev_was_empty = False
 
