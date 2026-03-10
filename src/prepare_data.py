@@ -2,6 +2,7 @@ import json
 import os
 import re
 from collections import defaultdict
+import pdfplumber
 
 ABBR_PATTERN = r"[А-ЯЁA-Z][А-Яа-яЁёA-Za-z]{1,15}"
 STOPWORDS_RU = {
@@ -17,12 +18,12 @@ STOPWORDS_EN = {"of", "the", "and", "for", "in", "on", "to"}
 
 # Извлечение текста из pdf
 def extract_text(path):
-    import fitz
-
     pages = []
-    with fitz.open(path) as doc:
-        for page in doc:
-            pages.append(page.get_text("text"))
+    with pdfplumber.open(path) as pdf:
+        for page in pdf.pages:
+            text = page.extract_text()
+            if text:  # проверяем, что текст не None
+                pages.append(text)
     text = "\n".join(pages)
     text = re.sub(r"([А-Яа-яЁёA-Za-z])\-\s*\n\s*([А-Яа-яЁёA-Za-z])", r"\1\2", text)
     return text
@@ -41,9 +42,7 @@ def match_abbr_from_end(abbr, words):
     abbr_chars = list(abbr)
     i = len(abbr_chars) - 1
     j = len(words) - 1
-
     used_words = []
-
     while i >= 0 and j >= 0:
         ch = abbr_chars[i]
         word = words[j]
@@ -69,8 +68,6 @@ def match_abbr_from_end(abbr, words):
         return list(reversed(used_words))
     return None
 
-
-
 # Выбор только слов с первыми буквами
 def crop_definition_to_abbr(abbr, definition):
     words = re.findall(r"[А-Яа-яЁёA-Za-z\-]+", definition)
@@ -81,31 +78,56 @@ def crop_definition_to_abbr(abbr, definition):
         return " ".join(matched)
     return None
 
-
 # Поиск раздела с сокращениями
 def find_abbreviation_section(text):
-    # Расширенный список заголовков раздела сокращений
-    heading_pattern = r'(?:сокращени[яей]|обозначени[яей]|термин[ы]|определени[яй]|аббревиатур[аы]|глоссарий|перечень терминов|список сокращений)'
+    heading_pattern = r'(?:сокращени[яей]|обозначени[яей]|Термины, определения и сокращения)'
     match = re.search(heading_pattern, text, re.IGNORECASE)
     if not match:
         return None
 
+    # Начинаем сразу после заголовка
     start = match.end()
     lines = text[start:].splitlines()
 
+    # Пропускаем пустые строки после заголовка
+    idx = 0
+    while idx < len(lines) and not lines[idx].strip():
+        idx += 1
+
     section_lines = []
-    for i, line in enumerate(lines):
+    prev_was_empty = False  # была ли предыдущая строка пустой
+
+    for i in range(idx, len(lines)):
+        line = lines[i]
         stripped = line.strip()
+
+        # Пустая строка – просто добавляем и отмечаем
         if not stripped:
             section_lines.append(line)
+            prev_was_empty = True
             continue
 
-        if (stripped[0].isupper() and
-            not re.search(r'[–—-]', stripped) and
-            (len(stripped) <= 50 or ':' in stripped or (i > 0 and not lines[i-1].strip()))):
+        # Строка содержит тире – часть определения
+        if re.search(r'[–—-]', stripped):
+            section_lines.append(line)
+            prev_was_empty = False
+            continue
+
+        # Строка похожа на аббревиатуру (короткая, из заглавных букв, возможно с цифрами/дефисом)
+        if re.match(rf'^{ABBR_PATTERN}$', stripped):
+            section_lines.append(line)
+            prev_was_empty = False
+            continue
+
+        # Если строка не пустая, без тире и не аббревиатура:
+        # 1) Если перед ней была пустая строка – это, скорее всего, начало нового раздела → останавливаемся
+        if prev_was_empty:
             break
 
+        # 2) Иначе – вероятно, продолжение многострочного определения (вторая строка без тире)
+        # Добавляем и продолжаем, сбрасывая флаг пустоты
         section_lines.append(line)
+        prev_was_empty = False
 
     return '\n'.join(section_lines)
 
@@ -136,15 +158,18 @@ def pattern_p1_checked(text):
 # 2. АББР — определение (в основном тексте)
 def pattern_p2_checked(text):
     results = []
-    matches = re.findall(rf"({ABBR_PATTERN})\s*[—–-]\s*([А-Яа-яёЁA-Za-z\s\-])", text)
-    for abbr, definition in matches:
-        abbr = abbr.upper().strip()
-        definition = definition.strip()
-        definition_cropped = crop_definition_to_abbr(abbr, definition)
-        if not definition_cropped:
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
             continue
-        confidence = 0.8 if check_first_letters(abbr, definition_cropped) else 0.6
-        results.append((abbr, definition_cropped, confidence))
+        match = re.match(rf"({ABBR_PATTERN})\s*[–—-]\s*(.+)", line)
+        if match:
+            abbr = match.group(1).upper()
+            definition = match.group(2).strip()
+            definition_cropped = crop_definition_to_abbr(abbr, definition)
+            if definition_cropped:
+                confidence = 0.8 if check_first_letters(abbr, definition_cropped) else 0.6
+                results.append((abbr, definition_cropped, confidence))
     return results
 
 
@@ -155,52 +180,18 @@ def pattern_p3_checked(text):
     if not section:
         return results
 
-    lines = section.splitlines()
-    i = 0
-    while i < len(lines):
-        line = lines[i].strip()
+    for line in section.splitlines():
+        line = line.strip()
         if not line:
-            i += 1
             continue
-        line_clean = re.sub(r'\*\*([^*]+)\*\*', r'\1', line)
-
-        # Обработка частного случая "– база данных.\nБД\n"
-        if line_clean.startswith(('–', '—', '-')):
-            definition = line_clean.lstrip('–— -').strip()
-            if i > 0:
-                prev_line = lines[i-1].strip()
-                prev_clean = re.sub(r'\*\*([^*]+)\*\*', r'\1', prev_line)
-                if re.match(rf'^{ABBR_PATTERN}$', prev_clean):
-                    abbr = prev_clean.upper()
-                    definition_cropped = crop_definition_to_abbr(abbr, definition)
-                    if definition_cropped:
-                        results.append((abbr, definition_cropped, 0.95))
-                        i += 1
-                        continue
-            if i < len(lines) - 1:
-                next_line = lines[i+1].strip()
-                next_clean = re.sub(r'\*\*([^*]+)\*\*', r'\1', next_line)
-                if re.match(rf'^{ABBR_PATTERN}$', next_clean):
-                    abbr = next_clean.upper()
-                    definition_cropped = crop_definition_to_abbr(abbr, definition)
-                    if definition_cropped:
-                        results.append((abbr, definition_cropped, 0.95))
-                        i += 2
-                        continue
-
-        # Проверяем, является ли строка сама по себе аббревиатурой с тире (однострочный случай)
-        match = re.match(rf"({ABBR_PATTERN})\s*[–—-]\s*(.+)", line_clean)
+        # Ищем шаблон "АББР – определение"
+        match = re.match(rf"({ABBR_PATTERN})\s*[–—-]\s*(.+)", line)
         if match:
             abbr = match.group(1).upper()
             definition = match.group(2).strip()
             definition_cropped = crop_definition_to_abbr(abbr, definition)
             if definition_cropped:
                 results.append((abbr, definition_cropped, 0.95))
-                i += 1
-                continue
-
-        i += 1
-
     return results
 
 # 4. АББР (...определение)
@@ -211,7 +202,7 @@ def pattern_p4_checked(text):
         inner = match.group(2)
 
         inner_clean = re.sub(
-            r"\b(акроним от|аббревиатур[аы]?|сокращени[еия]|англ\.|тат\.)\b",
+            r"\b(акроним от|аббревиатур[аы]?|сокращени[еия]|англ\.)\b",
             "", inner, flags=re.IGNORECASE)
         inner_clean = re.sub(r"\([^)]*\)", "", inner_clean)
         inner_clean = re.sub(r"[«»]", "", inner_clean).strip()
