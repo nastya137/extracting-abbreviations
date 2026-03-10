@@ -80,42 +80,76 @@ def crop_definition_to_abbr(abbr, definition):
 
 # Поиск раздела с сокращениями
 def find_abbreviation_section(text):
-    heading_pattern = r'(?:сокращени[яей]|обозначени[яей]|Термины, определения и сокращения)'
-    match = re.search(heading_pattern, text, re.IGNORECASE)
+    heading_patterns = [
+        r'^(?:\d+\.?\s*)?Термины,\s*определения\s+и\сокращения\s*[:.]?\s*$',
+        r'^(?:\d+\.?\s*)?Список\s+сокращений\s*[:.]?\s*$',
+        r'^(?:\d+\.?\s*)?Обозначения\s+и\сокращения\s*[:.]?\s*$',
+        r'^(?:\d+\.?\s*)?Глоссарий\s*[:.]?\s*$',
+        r'(?:Термины,\s*определения\s+и\сокращения|Сокращения|Обозначения)',
+    ]
+    match = None
+    for pat in heading_patterns:
+        match = re.search(pat, text, re.IGNORECASE | re.MULTILINE)
+        if match:
+            break
     if not match:
         return None
+
     start = match.end()
-    lines = text[start:].splitlines()
-    idx = 0
-    while idx < len(lines) and not lines[idx].strip():
-        idx += 1
-
+    rest = text[start:].lstrip('\n')
+    lines = rest.splitlines()
     section_lines = []
-    prev_was_empty = False  
 
-    for i in range(idx, len(lines)):
+    i = 0
+    found_start = False
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+        if not stripped:
+            i += 1
+            continue
+        has_dash_colon = any(c in stripped for c in ('–', '-', ':'))
+        first_word = stripped.split()[0] if stripped.split() else ''
+        is_abbr_start = is_abbreviation(first_word)
+        if has_dash_colon or is_abbr_start:
+            found_start = True
+            break
+        else:
+            i += 1
+
+    if not found_start:
+        return None
+
+    while i < len(lines):
         line = lines[i]
         stripped = line.strip()
 
         if not stripped:
             section_lines.append(line)
-            prev_was_empty = True
-            continue
-        if re.search(r'[–—-]', stripped):
-            section_lines.append(line)
-            prev_was_empty = False
+            i += 1
             continue
 
-        if re.match(rf'^{ABBR_PATTERN}$', stripped):
-            section_lines.append(line)
-            prev_was_empty = False
-            continue
-        if prev_was_empty:
-            break
+
+        if '–' not in stripped and '-' not in stripped and ':' not in stripped:
+            first_word = stripped.split()[0] if stripped.split() else ''
+            if not is_abbreviation(first_word) and not line.startswith((' ', '\t')) and not stripped[0].islower():
+                break
+
         section_lines.append(line)
-        prev_was_empty = False
+        i += 1
+
+    while section_lines and not section_lines[-1].strip():
+        section_lines.pop()
 
     return '\n'.join(section_lines)
+
+def is_abbreviation(word):
+        word = word.rstrip('.,;:!?')
+        if re.fullmatch(r'[А-ЯЁA-Z]{2,7}(?:[.-][А-ЯЁA-Z]{2,7})*', word):
+            return True
+        if word.isupper() and 2 <= len(word) <= 7:
+            return True
+        return False
 
 # 1. Определение (АББР)
 def pattern_p1_checked(text):
@@ -135,7 +169,7 @@ def pattern_p1_checked(text):
                     definition = " ".join(words[-len(abbr):])
                 else:
                     continue
-            confidence = 0.9
+            confidence = 0.8 if check_first_letters(abbr, definition) else 0.6
             results.append((abbr, definition, confidence))
 
     return results
@@ -153,7 +187,11 @@ def pattern_p2_checked(text):
             abbr = match.group(1).upper()
             definition = match.group(2).strip()
             definition_cropped = crop_definition_to_abbr(abbr, definition)
+            
             if definition_cropped:
+                words = definition_cropped.split()
+                if words and all(len(w) == 1 for w in words):
+                    continue
                 confidence = 0.8 if check_first_letters(abbr, definition_cropped) else 0.6
                 results.append((abbr, definition_cropped, confidence))
     return results
@@ -202,7 +240,7 @@ def pattern_p4_checked(text):
         matched = match_abbr_from_end(abbr, words)
         if matched:
             definition = " ".join(matched)
-            results.append((abbr, definition, 0.9))
+            results.append((abbr, definition, 0.85))
 
     return results
 
@@ -228,6 +266,27 @@ def extract_abbreviations(text):
     abbrs.extend(pattern_p4_checked(text))
     return deduplicate(abbrs)
 
+#Дедупликация
+def merge_duplicate_definitions(database):
+    merged_db = {}
+    for abbr, entries in database.items():
+        unique = {}
+        for entry in entries:
+            norm_def = entry['definition'].strip().lower()
+            if norm_def not in unique:
+                unique[norm_def] = {
+                    'definition': entry['definition'],
+                    'confidence': entry['confidence'],
+                    'sources': [entry['source']]
+                }
+            else:
+                if entry['confidence'] > unique[norm_def]['confidence']:
+                    unique[norm_def]['confidence'] = entry['confidence']
+                    unique[norm_def]['definition'] = entry['definition']
+                if entry['source'] not in unique[norm_def]['sources']:
+                    unique[norm_def]['sources'].append(entry['source'])
+        merged_db[abbr] = sorted(unique.values(), key=lambda x: x['confidence'], reverse=True)
+    return merged_db
 
 def process_pdf_folder(folder_path, output_json="abbreviations.json"):
     database = defaultdict(list)
@@ -240,13 +299,13 @@ def process_pdf_folder(folder_path, output_json="abbreviations.json"):
         abbrs = extract_abbreviations(text)
 
         for item in abbrs:
-            database[item["abbr"]].append(
-                {
-                    "definition": item["definition"],
-                    "source": filename,
-                    "confidence": item["confidence"]
-                }
-            )
+            database[item["abbr"]].append({
+                "definition": item["definition"].lower(),
+                "source": filename,
+                "confidence": item["confidence"]
+            })
+
+    database = merge_duplicate_definitions(database)
     with open(output_json, "w", encoding="utf-8") as f:
         json.dump(database, f, ensure_ascii=False, indent=2)
     return dict(database)
