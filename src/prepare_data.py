@@ -208,7 +208,6 @@ def pattern_p3_checked(text):
         line = line.strip()
         if not line:
             continue
-        # Ищем шаблон "АББР – определение"
         match = re.match(rf"({ABBR_PATTERN})\s*[–—-]\s*(.+)", line)
         if match:
             abbr = match.group(1).upper()
@@ -244,6 +243,39 @@ def pattern_p4_checked(text):
 
     return results
 
+# 5. Извлечение из таблицы вида "Вопрос-ответ" 
+def extract_from_tables_p5(pdf_path):
+    results = []
+    with pdfplumber.open(pdf_path) as pdf:
+        for page in pdf.pages:
+            tables = page.extract_tables()
+            for table in tables:
+                for row in table:
+                    if len(row) >= 2:
+                        cell1 = row[0] if row[0] is not None else ''
+                        cell2 = row[1] if row[1] is not None else ''
+                        if row[0] and row[1]:
+
+                            cell1_clean = str(cell1).replace('\n', '').strip()
+                            cell2_clean = str(cell2).replace('\n', '').strip()
+
+                        
+                            modified = cell1_clean
+                            for prefix in ["Чтотакое", "Ктотакой"]:
+                                if modified.startswith(prefix):
+                                    modified = modified[len(prefix):]
+                            if modified.endswith("?"):
+                                modified = modified[:-1]
+                            modified = modified.strip()
+
+                            if modified and modified != cell1_clean and (row[0] and row[1]):
+                                results.append({
+                                    "abbr": modified,
+                                    "definition": cell2_clean,
+                                    "confidence": 0.95
+                                })
+    return results
+
 # Дедупликация с сохранением максимального confidence
 def deduplicate(abbrs):
     best = {}
@@ -266,27 +298,63 @@ def extract_abbreviations(text):
     abbrs.extend(pattern_p4_checked(text))
     return deduplicate(abbrs)
 
+#Дедупликация
+def merge_duplicate_definitions(database):
+    merged_db = {}
+    for abbr, entries in database.items():
+        unique = {}
+        for entry in entries:
+            norm_def = entry['definition'].strip().lower()
+            if norm_def not in unique:
+                unique[norm_def] = {
+                    'definition': entry['definition'],
+                    'confidence': entry['confidence'],
+                    'sources': [entry['source']]
+                }
+            else:
+                if entry['confidence'] > unique[norm_def]['confidence']:
+                    unique[norm_def]['confidence'] = entry['confidence']
+                    unique[norm_def]['definition'] = entry['definition']
+                if entry['source'] not in unique[norm_def]['sources']:
+                    unique[norm_def]['sources'].append(entry['source'])
+        merged_db[abbr] = sorted(unique.values(), key=lambda x: x['confidence'], reverse=True)
+    return merged_db
 
 def process_pdf_folder(folder_path, output_json="abbreviations.json"):
+
+
     database = defaultdict(list)
+    existing_keys = set()
+
     for filename in os.listdir(folder_path):
         if not filename.lower().endswith(".pdf"):
             continue
 
         path = os.path.join(folder_path, filename)
         text = extract_text(path)
-        abbrs = extract_abbreviations(text)
+        abbrs = extract_abbreviations(text)  
+        table_abbrs = extract_from_tables_p5(path)  
 
-        for item in abbrs:
-            database[item["abbr"]].append(
-                {
-                    "definition": item["definition"],
-                    "source": filename,
-                    "confidence": item["confidence"]
-                }
-            )
+        all_abbrs = abbrs + table_abbrs
+
+        for item in all_abbrs:
+            abbr = item["abbr"]
+            definition = item["definition"].lower()   
+            source = filename
+            confidence = item["confidence"]
+            key = (abbr, definition, source)
+
+            database[abbr].append({
+                "definition": definition,
+                "source": source,
+                "confidence": confidence
+            })
+            existing_keys.add(key)
+
+    database = merge_duplicate_definitions(database)
     with open(output_json, "w", encoding="utf-8") as f:
-        json.dump(database, f, ensure_ascii=False, indent=2)
+        json.dump(dict(database), f, ensure_ascii=False, indent=2)
+
     return dict(database)
 
 def _extract_query_abbr(query):
@@ -298,8 +366,8 @@ def answer_query(query, database):
     if abbr in database:
         answers = database[abbr]
         return [
-            f"{item['definition']} (источник: {item['source']}, confidence={item['confidence']})"
-            for item in answers if item['confidence']>0.6
+            f"{item['definition']} (источник: {', '.join(item['sources'])}, confidence={item['confidence']})"
+            for item in answers if item['confidence'] > 0.6
         ]
     else:
         return [f"В документах расшифровка аббревиатуры '{abbr}' не найдена."]
