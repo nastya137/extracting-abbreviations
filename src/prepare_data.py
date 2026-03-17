@@ -92,10 +92,24 @@ def find_abbreviation_section(text):
         match = re.search(pat, text, re.IGNORECASE | re.MULTILINE)
         if match:
             break
+    heading_patterns = [
+        r'^(?:\d+\.?\s*)?Термины,\s*определения\s+и\сокращения\s*[:.]?\s*$',
+        r'^(?:\d+\.?\s*)?Список\s+сокращений\s*[:.]?\s*$',
+        r'^(?:\d+\.?\s*)?Обозначения\s+и\сокращения\s*[:.]?\s*$',
+        r'^(?:\d+\.?\s*)?Глоссарий\s*[:.]?\s*$',
+        r'(?:Термины,\s*определения\s+и\сокращения|Сокращения|Обозначения)',
+    ]
+    match = None
+    for pat in heading_patterns:
+        match = re.search(pat, text, re.IGNORECASE | re.MULTILINE)
+        if match:
+            break
     if not match:
         return None
 
     start = match.end()
+    rest = text[start:].lstrip('\n')
+    lines = rest.splitlines()
     rest = text[start:].lstrip('\n')
     lines = rest.splitlines()
     section_lines = []
@@ -103,9 +117,13 @@ def find_abbreviation_section(text):
     i = 0
     found_start = False
     while i < len(lines):
+    i = 0
+    found_start = False
+    while i < len(lines):
         line = lines[i]
         stripped = line.strip()
         if not stripped:
+            i += 1
             i += 1
             continue
         has_dash_colon = any(c in stripped for c in ('–', '-', ':'))
@@ -125,10 +143,33 @@ def find_abbreviation_section(text):
         stripped = line.strip()
 
         if not stripped:
+        has_dash_colon = any(c in stripped for c in ('–', '-', ':'))
+        first_word = stripped.split()[0] if stripped.split() else ''
+        is_abbr_start = is_abbreviation(first_word)
+        if has_dash_colon or is_abbr_start:
+            found_start = True
+            break
+        else:
+            i += 1
+
+    if not found_start:
+        return None
+
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+
+        if not stripped:
             section_lines.append(line)
+            i += 1
             i += 1
             continue
 
+
+        if '–' not in stripped and '-' not in stripped and ':' not in stripped:
+            first_word = stripped.split()[0] if stripped.split() else ''
+            if not is_abbreviation(first_word) and not line.startswith((' ', '\t')) and not stripped[0].islower():
+                break
 
         if '–' not in stripped and '-' not in stripped and ':' not in stripped:
             first_word = stripped.split()[0] if stripped.split() else ''
@@ -140,8 +181,20 @@ def find_abbreviation_section(text):
 
     while section_lines and not section_lines[-1].strip():
         section_lines.pop()
+        i += 1
+
+    while section_lines and not section_lines[-1].strip():
+        section_lines.pop()
 
     return '\n'.join(section_lines)
+
+def is_abbreviation(word):
+        word = word.rstrip('.,;:!?')
+        if re.fullmatch(r'[А-ЯЁA-Z]{2,7}(?:[.-][А-ЯЁA-Z]{2,7})*', word):
+            return True
+        if word.isupper() and 2 <= len(word) <= 7:
+            return True
+        return False
 
 def is_abbreviation(word):
         word = word.rstrip('.,;:!?')
@@ -170,6 +223,7 @@ def pattern_p1_checked(text):
                 else:
                     continue
             confidence = 0.8 if check_first_letters(abbr, definition) else 0.6
+            confidence = 0.8 if check_first_letters(abbr, definition) else 0.6
             results.append((abbr, definition, confidence))
 
     return results
@@ -188,7 +242,11 @@ def pattern_p2_checked(text):
             definition = match.group(2).strip()
             definition_cropped = crop_definition_to_abbr(abbr, definition)
             
+            
             if definition_cropped:
+                words = definition_cropped.split()
+                if words and all(len(w) == 1 for w in words):
+                    continue
                 words = definition_cropped.split()
                 if words and all(len(w) == 1 for w in words):
                     continue
@@ -239,6 +297,7 @@ def pattern_p4_checked(text):
         matched = match_abbr_from_end(abbr, words)
         if matched:
             definition = " ".join(matched)
+            results.append((abbr, definition, 0.85))
             results.append((abbr, definition, 0.85))
 
     return results
@@ -321,37 +380,23 @@ def merge_duplicate_definitions(database):
     return merged_db
 
 def process_pdf_folder(folder_path, output_json="abbreviations.json"):
-
-
     database = defaultdict(list)
-    existing_keys = set()
-
     for filename in os.listdir(folder_path):
         if not filename.lower().endswith(".pdf"):
             continue
 
         path = os.path.join(folder_path, filename)
         text = extract_text(path)
-        abbrs = extract_abbreviations(text)  
-        table_abbrs = extract_from_tables_p5(path)  
+        abbrs = extract_abbreviations(text)
 
-        all_abbrs = abbrs + table_abbrs
-
-        for item in all_abbrs:
-            abbr = item["abbr"]
-            definition = item["definition"].lower()   
-            source = filename
-            confidence = item["confidence"]
-            key = (abbr, definition, source)
-
-            database[abbr].append({
-                "definition": definition,
-                "source": source,
-                "confidence": confidence
-            })
-            existing_keys.add(key)
-
-    database = merge_duplicate_definitions(database)
+        for item in abbrs:
+            database[item["abbr"]].append(
+                {
+                    "definition": item["definition"],
+                    "source": filename,
+                    "confidence": item["confidence"]
+                }
+            )
     with open(output_json, "w", encoding="utf-8") as f:
         json.dump(dict(database), f, ensure_ascii=False, indent=2)
 
