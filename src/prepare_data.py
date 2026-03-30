@@ -9,9 +9,9 @@ STOPWORDS_RU = {
     "И", "А", "НО", "ИЛИ", "ДА",
     "ЛИ", "ЖЕ", "БЫ", "В", "ВО",
     "НА", "К", "О", "ОБ", "ОБО", "ОТ",
-    "ДО", "ПО", "ПРИ", "ПРО", "ДЛЯ",  "С",
+    "ДО", "ПО", "ПРИ", "ПРО", "ДЛЯ", "С",
     "СО", "У", "ИЗ", "БЕЗ", "ПОД",
-    "ПЕРЕД",  "ЧЕРЕЗ",   "МЕЖДУ"
+    "ПЕРЕД", "ЧЕРЕЗ", "МЕЖДУ"
 }
 STOPWORDS_EN = {"of", "the", "and", "for", "in", "on", "to"}
 
@@ -22,7 +22,7 @@ def extract_text(path):
     with pdfplumber.open(path) as pdf:
         for page in pdf.pages:
             text = page.extract_text()
-            if text:  # проверяем, что текст не None
+            if text:
                 pages.append(text)
     text = "\n".join(pages)
     text = re.sub(r"([А-Яа-яЁёA-Za-z])\-\s*\n\s*([А-Яа-яЁёA-Za-z])", r"\1\2", text)
@@ -37,7 +37,8 @@ def check_first_letters(abbr, definition):
     )
     return abbr.upper() == initials[: len(abbr)]
 
-#Сопоставление первых букв с конца, поддержка предлогов и усечённых слов
+
+# Сопоставление первых букв с конца, поддержка предлогов и усечённых слов
 def match_abbr_from_end(abbr, words):
     abbr_chars = list(abbr)
     i = len(abbr_chars) - 1
@@ -68,6 +69,7 @@ def match_abbr_from_end(abbr, words):
         return list(reversed(used_words))
     return None
 
+
 # Выбор только слов с первыми буквами
 def crop_definition_to_abbr(abbr, definition):
     words = re.findall(r"[А-Яа-яЁёA-Za-z\-]+", definition)
@@ -78,20 +80,9 @@ def crop_definition_to_abbr(abbr, definition):
         return " ".join(matched)
     return None
 
+
 # Поиск раздела с сокращениями
 def find_abbreviation_section(text):
-    heading_patterns = [
-        r'^(?:\d+\.?\s*)?Термины,\s*определения\s+и\сокращения\s*[:.]?\s*$',
-        r'^(?:\d+\.?\s*)?Список\s+сокращений\s*[:.]?\s*$',
-        r'^(?:\d+\.?\s*)?Обозначения\s+и\сокращения\s*[:.]?\s*$',
-        r'^(?:\d+\.?\s*)?Глоссарий\s*[:.]?\s*$',
-        r'(?:Термины,\s*определения\s+и\сокращения|Сокращения|Обозначения)',
-    ]
-    match = None
-    for pat in heading_patterns:
-        match = re.search(pat, text, re.IGNORECASE | re.MULTILINE)
-        if match:
-            break
     heading_patterns = [
         r'^(?:\d+\.?\s*)?Термины,\s*определения\s+и\сокращения\s*[:.]?\s*$',
         r'^(?:\d+\.?\s*)?Список\s+сокращений\s*[:.]?\s*$',
@@ -110,39 +101,16 @@ def find_abbreviation_section(text):
     start = match.end()
     rest = text[start:].lstrip('\n')
     lines = rest.splitlines()
-    rest = text[start:].lstrip('\n')
-    lines = rest.splitlines()
     section_lines = []
 
     i = 0
     found_start = False
     while i < len(lines):
-    i = 0
-    found_start = False
-    while i < len(lines):
         line = lines[i]
         stripped = line.strip()
         if not stripped:
-            i += 1
             i += 1
             continue
-        has_dash_colon = any(c in stripped for c in ('–', '-', ':'))
-        first_word = stripped.split()[0] if stripped.split() else ''
-        is_abbr_start = is_abbreviation(first_word)
-        if has_dash_colon or is_abbr_start:
-            found_start = True
-            break
-        else:
-            i += 1
-
-    if not found_start:
-        return None
-
-    while i < len(lines):
-        line = lines[i]
-        stripped = line.strip()
-
-        if not stripped:
         has_dash_colon = any(c in stripped for c in ('–', '-', ':'))
         first_word = stripped.split()[0] if stripped.split() else ''
         is_abbr_start = is_abbreviation(first_word)
@@ -162,14 +130,7 @@ def find_abbreviation_section(text):
         if not stripped:
             section_lines.append(line)
             i += 1
-            i += 1
             continue
-
-
-        if '–' not in stripped and '-' not in stripped and ':' not in stripped:
-            first_word = stripped.split()[0] if stripped.split() else ''
-            if not is_abbreviation(first_word) and not line.startswith((' ', '\t')) and not stripped[0].islower():
-                break
 
         if '–' not in stripped and '-' not in stripped and ':' not in stripped:
             first_word = stripped.split()[0] if stripped.split() else ''
@@ -181,28 +142,18 @@ def find_abbreviation_section(text):
 
     while section_lines and not section_lines[-1].strip():
         section_lines.pop()
-        i += 1
-
-    while section_lines and not section_lines[-1].strip():
-        section_lines.pop()
 
     return '\n'.join(section_lines)
 
-def is_abbreviation(word):
-        word = word.rstrip('.,;:!?')
-        if re.fullmatch(r'[А-ЯЁA-Z]{2,7}(?:[.-][А-ЯЁA-Z]{2,7})*', word):
-            return True
-        if word.isupper() and 2 <= len(word) <= 7:
-            return True
-        return False
 
 def is_abbreviation(word):
-        word = word.rstrip('.,;:!?')
-        if re.fullmatch(r'[А-ЯЁA-Z]{2,7}(?:[.-][А-ЯЁA-Z]{2,7})*', word):
-            return True
-        if word.isupper() and 2 <= len(word) <= 7:
-            return True
-        return False
+    word = word.rstrip('.,;:!?')
+    if re.fullmatch(r'[А-ЯЁA-Z]{2,7}(?:[.-][А-ЯЁA-Z]{2,7})*', word):
+        return True
+    if word.isupper() and 2 <= len(word) <= 7:
+        return True
+    return False
+
 
 # 1. Определение (АББР)
 def pattern_p1_checked(text):
@@ -223,7 +174,6 @@ def pattern_p1_checked(text):
                 else:
                     continue
             confidence = 0.8 if check_first_letters(abbr, definition) else 0.6
-            confidence = 0.8 if check_first_letters(abbr, definition) else 0.6
             results.append((abbr, definition, confidence))
 
     return results
@@ -241,12 +191,8 @@ def pattern_p2_checked(text):
             abbr = match.group(1).upper()
             definition = match.group(2).strip()
             definition_cropped = crop_definition_to_abbr(abbr, definition)
-            
-            
+
             if definition_cropped:
-                words = definition_cropped.split()
-                if words and all(len(w) == 1 for w in words):
-                    continue
                 words = definition_cropped.split()
                 if words and all(len(w) == 1 for w in words):
                     continue
@@ -275,6 +221,7 @@ def pattern_p3_checked(text):
                 results.append((abbr, definition_cropped, 0.95))
     return results
 
+
 # 4. АББР (...определение)
 def pattern_p4_checked(text):
     results = []
@@ -291,18 +238,18 @@ def pattern_p4_checked(text):
             continue
 
         words = re.findall(r"[А-Яа-яЁёA-Za-z\-]+", inner_clean)
-        if len(words) < len(abbr):   
+        if len(words) < len(abbr):
             continue
 
         matched = match_abbr_from_end(abbr, words)
         if matched:
             definition = " ".join(matched)
             results.append((abbr, definition, 0.85))
-            results.append((abbr, definition, 0.85))
 
     return results
 
-# 5. Извлечение из таблицы вида "Вопрос-ответ" 
+
+# 5. Извлечение из таблицы вида "Вопрос-ответ"
 def extract_from_tables_p5(pdf_path):
     results = []
     with pdfplumber.open(pdf_path) as pdf:
@@ -314,11 +261,9 @@ def extract_from_tables_p5(pdf_path):
                         cell1 = row[0] if row[0] is not None else ''
                         cell2 = row[1] if row[1] is not None else ''
                         if row[0] and row[1]:
-
                             cell1_clean = str(cell1).replace('\n', '').strip()
                             cell2_clean = str(cell2).replace('\n', '').strip()
 
-                        
                             modified = cell1_clean
                             for prefix in ["Чтотакое", "Ктотакой"]:
                                 if modified.startswith(prefix):
@@ -327,13 +272,14 @@ def extract_from_tables_p5(pdf_path):
                                 modified = modified[:-1]
                             modified = modified.strip()
 
-                            if modified and modified != cell1_clean and (row[0] and row[1]):
+                            if modified and modified != cell1_clean:
                                 results.append({
                                     "abbr": modified,
                                     "definition": cell2_clean,
                                     "confidence": 0.95
                                 })
     return results
+
 
 # Дедупликация с сохранением максимального confidence
 def deduplicate(abbrs):
@@ -357,7 +303,8 @@ def extract_abbreviations(text):
     abbrs.extend(pattern_p4_checked(text))
     return deduplicate(abbrs)
 
-#Дедупликация
+
+# Дедупликация
 def merge_duplicate_definitions(database):
     merged_db = {}
     for abbr, entries in database.items():
@@ -379,8 +326,12 @@ def merge_duplicate_definitions(database):
         merged_db[abbr] = sorted(unique.values(), key=lambda x: x['confidence'], reverse=True)
     return merged_db
 
+
 def process_pdf_folder(folder_path, output_json="abbreviations.json"):
+
     database = defaultdict(list)
+    existing_keys = set()
+
     for filename in os.listdir(folder_path):
         if not filename.lower().endswith(".pdf"):
             continue
@@ -388,23 +339,36 @@ def process_pdf_folder(folder_path, output_json="abbreviations.json"):
         path = os.path.join(folder_path, filename)
         text = extract_text(path)
         abbrs = extract_abbreviations(text)
+        table_abbrs = extract_from_tables_p5(path)
 
-        for item in abbrs:
-            database[item["abbr"]].append(
-                {
-                    "definition": item["definition"],
-                    "source": filename,
-                    "confidence": item["confidence"]
-                }
-            )
+        all_abbrs = abbrs + table_abbrs
+
+        for item in all_abbrs:
+            abbr = item["abbr"]
+            definition = item["definition"].lower()
+            source = filename
+            confidence = item["confidence"]
+            key = (abbr, definition, source)
+
+            if key not in existing_keys:
+                database[abbr].append({
+                    "definition": definition,
+                    "source": source,
+                    "confidence": confidence
+                })
+                existing_keys.add(key)
+
+    database = merge_duplicate_definitions(database)
     with open(output_json, "w", encoding="utf-8") as f:
         json.dump(dict(database), f, ensure_ascii=False, indent=2)
 
     return dict(database)
 
+
 def _extract_query_abbr(query):
     candidates = re.findall(ABBR_PATTERN, query.upper())
     return candidates[-1] if candidates else query.strip().upper()
+
 
 def answer_query(query, database):
     abbr = _extract_query_abbr(query)
