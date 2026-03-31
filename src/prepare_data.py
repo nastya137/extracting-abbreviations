@@ -364,34 +364,21 @@ def pattern_p4_checked(text):
 
 
 # 5. Извлечение из таблицы вида "Вопрос-ответ"
-def extract_from_tables_p5(pdf_path):
+def pattern_p5_checked(text):
     results = []
-    with pdfplumber.open(pdf_path) as pdf:
-        for page in pdf.pages:
-            tables = page.extract_tables()
-            for table in tables:
-                for row in table:
-                    if len(row) >= 2:
-                        cell1 = row[0] if row[0] is not None else ''
-                        cell2 = row[1] if row[1] is not None else ''
-                        if row[0] and row[1]:
-                            cell1_clean = str(cell1).replace('\n', '').strip()
-                            cell2_clean = str(cell2).replace('\n', '').strip()
-
-                            modified = cell1_clean
-                            for prefix in ["Чтотакое", "Ктотакой"]:
-                                if modified.startswith(prefix):
-                                    modified = modified[len(prefix):]
-                            if modified.endswith("?"):
-                                modified = modified[:-1]
-                            modified = modified.strip()
-
-                            if modified and modified != cell1_clean:
-                                results.append({
-                                    "abbr": modified,
-                                    "definition": cell2_clean,
-                                    "confidence": 0.95
-                                })
+    pattern = re.compile(
+        r'(?:Что такое|Что значит|Как расшифровывается|Кто такой|Кто такие)\s+'
+        r'([А-ЯЁA-Z0-9\s.-]+?)\?\s*(.*?)(?:\n|$)',
+        re.IGNORECASE | re.DOTALL
+    )
+    for match in pattern.finditer(text):
+        abbr_raw = match.group(1).strip()
+        definition = match.group(2).strip()
+        if not definition:
+            continue
+        abbr = ' '.join(abbr_raw.split()).upper()
+        definition = ' '.join(definition.split())
+        results.append((abbr, definition, 0.9))
     return results
 
 
@@ -415,6 +402,7 @@ def extract_abbreviations(text):
     abbrs.extend(pattern_p2_checked(text))
     abbrs.extend(pattern_p3_checked(text))
     abbrs.extend(pattern_p4_checked(text))
+    abbrs.extend(pattern_p5_checked(text))
     return deduplicate(abbrs)
 
 
@@ -453,11 +441,8 @@ def process_pdf_folder(folder_path, output_json="abbreviations.json"):
         path = os.path.join(folder_path, filename)
         text = extract_text(path)
         abbrs = extract_abbreviations(text)
-        table_abbrs = extract_from_tables_p5(path)
 
-        all_abbrs = abbrs + table_abbrs
-
-        for item in all_abbrs:
+        for item in abbrs:
             abbr = item["abbr"]
             definition = item["definition"].lower()
             source = filename
