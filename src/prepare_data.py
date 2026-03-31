@@ -15,19 +15,92 @@ STOPWORDS_RU = {
 }
 STOPWORDS_EN = {"of", "the", "and", "for", "in", "on", "to"}
 
-
-# Извлечение текста из pdf
 def extract_text(path):
-    pages = []
+    pages_text = []
     with pdfplumber.open(path) as pdf:
         for page in pdf.pages:
-            text = page.extract_text()
-            if text:
-                pages.append(text)
-    text = "\n".join(pages)
+            lines = page.extract_text_lines()
+            tables = page.find_tables()
+
+            if not tables:
+                text = page.extract_text()
+                if text:
+                    pages_text.append(text)
+                continue
+            table_bboxes = [t.bbox for t in tables]
+            lines_outside = []
+            for line in lines:
+                line_bbox = (line['x0'], line['top'], line['x1'], line['bottom'])
+                inside_table = False
+                for tx0, ty0, tx1, ty1 in table_bboxes:
+                    if (line['x0'] >= tx0 and line['x1'] <= tx1 and
+                        line['top'] >= ty0 and line['bottom'] <= ty1):
+                        inside_table = True
+                        break
+                if not inside_table:
+                    lines_outside.append(line['text'])
+            outside_text = '\n'.join(lines_outside)
+            table_rows = []
+            for t in tables:
+                cells = t.extract()
+                if cells:
+                    for row in cells:
+                        row_parts = []
+                        for cell in row:
+                            if cell is None:
+                                cell = ''
+                            cell_clean = ' '.join(cell.split())
+                            row_parts.append(cell_clean)
+                        row_text = ' '.join(row_parts).strip()
+                        if row_text:
+                            table_rows.append(row_text)
+
+            all_items = []  # (y, text)
+            for line in lines:
+                if not any(line['top'] >= ty0 and line['bottom'] <= ty1 for (tx0, ty0, tx1, ty1) in table_bboxes):
+                    all_items.append((line['top'], line['text']))
+            for t_idx, t in enumerate(tables):
+                rows = []
+                cells = t.extract()
+                if cells:
+                    for i, row in enumerate(cells):
+                        row_parts = []
+                        for cell in row:
+                            if cell is None:
+                                cell = ''
+                            cell_clean = ' '.join(cell.split())
+                            row_parts.append(cell_clean)
+                        row_text = ' '.join(row_parts).strip()
+                        if row_text:
+                            rows.append(row_text)
+                y0 = t.bbox[1]
+                for i, row_text in enumerate(rows):
+                    all_items.append((y0 + i * 0.1, row_text))
+
+            all_items.sort(key=lambda x: x[0])
+            page_text = '\n'.join(text for _, text in all_items)
+            pages_text.append(page_text)
+
+    text = '\n'.join(pages_text)
     text = re.sub(r"([А-Яа-яЁёA-Za-z])\-\s*\n\s*([А-Яа-яЁёA-Za-z])", r"\1\2", text)
     return text
-
+# def extract_text(path):
+#     pages = []
+#     with pdfplumber.open(path) as pdf:
+#         for page in pdf.pages:
+#             text = page.extract_text()
+#             if text:
+#                 pages.append(text)
+#             tables = page.extract_tables()
+#             for table in tables:
+#                 for row in table:
+#                     for cell in row:
+#                         if cell is not None:
+#                             pages.append(str(cell))
+#
+#     text = "\n".join(pages)
+#     text = re.sub(r"([А-Яа-яЁёA-Za-z])\-\s*\n\s*([А-Яа-яЁёA-Za-z])", r"\1\2", text)
+#     return text
 
 # Проверка первых букв
 def check_first_letters(abbr, definition):
