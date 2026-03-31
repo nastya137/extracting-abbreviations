@@ -1,2 +1,4 @@
 pathlib~=1.0.1
 pdfplumber
+pymorphy3
+replicate

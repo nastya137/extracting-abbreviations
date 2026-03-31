@@ -4,7 +4,7 @@ PDF_PATH = "C:/Users/user/Desktop\extract_abbreviations\extracting-abbreviations
 
 def inspect_pdf(pdf_path):
     text = extract_text(pdf_path)
-    print(f"Анализ файла: {pdf_path}")
+    print(f"Текст файла: {pdf_path}")
     text = extract_text(pdf_path)   
     print(text)
 
